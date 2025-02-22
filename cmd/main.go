@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"os"
 
 	"github.com/joho/godotenv"
@@ -10,15 +9,18 @@ import (
 	"github.com/nurtikaga/coffeeUp/pkg/handler"
 	"github.com/nurtikaga/coffeeUp/pkg/repository"
 	"github.com/nurtikaga/coffeeUp/pkg/service"
+	"github.com/rs/cors" // Import the CORS package
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
 func main() {
+	logrus.SetFormatter(new(logrus.JSONFormatter))
 	if err := initConfigs(); err != nil {
-		log.Fatalf("Init Configs wrong: %s", err.Error())
+		logrus.Fatalf("Init Configs wrong: %s", err.Error())
 	}
 	if err := godotenv.Load(); err != nil {
-		log.Fatalf("Password from env wrong: %s", err.Error())
+		logrus.Fatalf("Password from env wrong: %s", err.Error())
 	}
 
 	db, err := repository.NewPostgresDb(repository.Config{
@@ -29,17 +31,30 @@ func main() {
 		Dbname:   viper.GetString("db.dbname"),
 		Sslmode:  viper.GetString("db.sslmode"),
 	})
+	if err != nil {
+		logrus.Fatalf("Couldnt connect to DB: %s", err.Error())
+	}
+
 	repos := repository.NewRepository(db)
 	services := service.NewService(repos)
 	handler := handler.NewHandler(services)
 
-	if err != nil {
-		log.Fatalf("Couldnt connect to DB ", err.Error())
-	}
+	// Initialize CORS middleware
+	corsMiddleware := cors.New(cors.Options{
+		AllowedOrigins:   []string{"http://localhost:3000"}, // Allow your React frontend origin
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Content-Type", "Authorization"},
+		AllowCredentials: true,
+		Debug:            true, // Enable debug logging for CORS
+	})
+
+	// Wrap your router with the CORS middleware
+	router := handler.InitRoutes()
+	handlerWithCORS := corsMiddleware.Handler(router)
 
 	srv := new(coffeeup.Server)
-	if err := srv.Run(viper.GetString("port"), handler.InitRoutes()); err != nil {
-		log.Fatalf("Server doesnt run", err.Error())
+	if err := srv.Run(viper.GetString("port"), handlerWithCORS); err != nil {
+		logrus.Fatalf("Server doesnt run: %s", err.Error())
 	}
 }
 
